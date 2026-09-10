@@ -18,13 +18,23 @@ with chat_tab:
     with col2:
         text = st.text_area("Mensaje", "Busco alquilar 2 o 3 ambientes en Caballito hasta 800 mil. Tengo un perro.")
         if st.button("Enviar al motor"):
-            r = requests.post(f"{API_URL}/api/simulator/message", json={"phone": phone, "name": name, "text": text}, timeout=20)
+            r = requests.post(f"{API_URL}/api/simulator/message", json={"phone": phone, "name": name, "text": text}, timeout=30)
             if r.ok:
                 data = r.json()
                 st.subheader("Respuesta")
                 st.write(data.get("reply"))
-                st.subheader("Datos estructurados detectados")
-                st.json(data.get("profile", {}))
+
+                extraction = data.get("extraction", {})
+                source = extraction.get("source", "desconocida")
+                st.caption(f"Fuente de interpretación: {source}")
+
+                col_profile, col_current = st.columns(2)
+                with col_profile:
+                    st.subheader("Perfil acumulado")
+                    st.json(data.get("profile", {}))
+                with col_current:
+                    st.subheader("Detectado en este mensaje")
+                    st.json(extraction.get("fields_from_current_message", {}))
             else:
                 st.error(r.text)
 

@@ -8,7 +8,8 @@ Prototipo ejecutable de un chatbot inmobiliario en el que WhatsApp es un canal, 
 - Base de datos SQLAlchemy; arranca con SQLite para que la demo funcione sin instalar nada extra y puede cambiar a PostgreSQL.
 - 15 propiedades ficticias de prueba.
 - Simulador de mensajes.
-- Extracción inicial de operación, barrios, ambientes, presupuesto, moneda, mascotas y mes de mudanza.
+- Extracción de operación, barrios, ambientes, presupuesto, moneda, mascotas y fecha de mudanza.
+- Extracción semántica opcional mediante LLM, con normalización y fallback determinístico si no hay API o si falla el modelo.
 - Búsqueda de propiedades compatibles.
 - Registro de contactos, conversaciones, mensajes, perfiles de búsqueda e intereses.
 - Derivación a humano por palabra clave.
@@ -16,34 +17,32 @@ Prototipo ejecutable de un chatbot inmobiliario en el que WhatsApp es un canal, 
 - Endpoint oficial de webhook preparado para WhatsApp Cloud API.
 - Validación opcional de firma de Meta.
 - Envío de respuestas por WhatsApp al completar credenciales.
-- Capa LLM opcional. El modo `mock` funciona sin clave y no inventa información.
 - Docker Compose para PostgreSQL.
 
 ## Arranque rápido en Windows
 
 Requisitos: Python 3.11 o 3.12. Docker es opcional en esta primera prueba.
 
-1. Descomprimir el proyecto.
-2. Abrir CMD o PowerShell dentro de la carpeta.
-3. Ejecutar:
+1. Abrir CMD o PowerShell dentro de la carpeta del proyecto.
+2. Ejecutar:
 
 ```bat
 scripts\setup_windows.bat
 ```
 
-4. Abrir una terminal y ejecutar:
+3. Abrir una terminal y ejecutar:
 
 ```bat
 scripts\run_api.bat
 ```
 
-5. Abrir otra terminal y ejecutar:
+4. Abrir otra terminal y ejecutar:
 
 ```bat
 scripts\run_panel.bat
 ```
 
-6. Abrir `http://127.0.0.1:8501`.
+5. Abrir `http://127.0.0.1:8501`.
 
 La documentación técnica de la API queda en `http://127.0.0.1:8000/docs`.
 
@@ -55,6 +54,12 @@ Enviar desde el simulador:
 
 El motor debería devolver propiedades compatibles y guardar un perfil estructurado del cliente.
 
+Después, usando el mismo teléfono demo, probar un mensaje de continuidad:
+
+> También me sirve Palermo, pero mejor hasta 750 mil.
+
+Con LLM activado, la extracción interpreta el segundo mensaje en relación con el perfil acumulado y actualiza únicamente los campos que correspondan.
+
 También se puede probar una propiedad específica:
 
 > ¿Sigue disponible MM-002? Tengo perro.
@@ -62,6 +67,31 @@ También se puede probar una propiedad específica:
 Y la derivación humana:
 
 > Quiero hablar con un humano.
+
+## Extracción semántica y LLM
+
+Por defecto el proyecto funciona sin ninguna API externa:
+
+```text
+LLM_PROVIDER=mock
+```
+
+En ese modo se utiliza un extractor determinístico simple. Para activar OpenAI, completar `.env`:
+
+```text
+LLM_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_MODEL=...
+```
+
+Al estar activado, el modelo tiene dos funciones separadas:
+
+1. interpretar el mensaje y devolver actualizaciones estructuradas del perfil de búsqueda;
+2. reescribir de forma natural la respuesta que el sistema ya construyó con datos comprobados.
+
+La salida de extracción se valida y normaliza antes de modificar la base. Si la llamada al modelo falla, el sistema vuelve automáticamente al extractor por reglas. En el simulador se muestra la fuente utilizada (`openai`, `rules` o `rules_fallback`) y qué campos fueron detectados específicamente en el último mensaje.
+
+El LLM no es la fuente de verdad de precio, disponibilidad, expensas ni condiciones de una propiedad. Esos datos siempre salen de la base inmobiliaria.
 
 ## Pasar de SQLite a PostgreSQL
 
@@ -82,24 +112,6 @@ Reiniciar la API y ejecutar:
 ```bat
 python -m app.seed
 ```
-
-## Conectar un LLM
-
-Por defecto:
-
-```text
-LLM_PROVIDER=mock
-```
-
-Eso deja que toda la lógica se pruebe sin API externa. Para activar OpenAI, completar en `.env`:
-
-```text
-LLM_PROVIDER=openai
-OPENAI_API_KEY=...
-OPENAI_MODEL=...
-```
-
-La capa LLM sólo reescribe un borrador construido con datos obtenidos por el sistema. No es la fuente de verdad de precio, disponibilidad, expensas o condiciones.
 
 ## Conectar WhatsApp real
 
