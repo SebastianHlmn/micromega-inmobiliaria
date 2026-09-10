@@ -2,7 +2,6 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..models import Contact, Conversation, Message, SearchProfile, Interest
-from .extraction_service import extract_search_fields
 from .property_service import search_properties, find_property_by_text
 from .llm_service import LLMService
 from ..config import get_settings
@@ -35,19 +34,36 @@ def get_or_create_conversation(db: Session, contact: Contact) -> Conversation:
     return conv
 
 
-def upsert_profile(db: Session, contact: Contact, text: str) -> SearchProfile:
+def _profile_as_dict(profile: SearchProfile) -> dict:
+    return {
+        "operation": profile.operation,
+        "neighborhoods": profile.neighborhoods,
+        "rooms_min": profile.rooms_min,
+        "rooms_max": profile.rooms_max,
+        "budget_max": profile.budget_max,
+        "currency": profile.currency,
+        "pets": profile.pets,
+        "move_date": profile.move_date,
+    }
+
+
+def upsert_profile(db: Session, contact: Contact, text: str) -> tuple[SearchProfile, str, dict]:
     profile = db.scalar(select(SearchProfile).where(SearchProfile.contact_id == contact.id))
     if not profile:
         profile = SearchProfile(contact_id=contact.id)
         db.add(profile)
         db.flush()
 
-    fields = extract_search_fields(text)
+    fields, extraction_source = llm.extract_search_fields(
+        text=text,
+        current_profile=_profile_as_dict(profile),
+    )
     for key, value in fields.items():
         setattr(profile, key, value)
+
     profile.free_text_notes = ((profile.free_text_notes or "") + "\n" + text).strip()[-4000:]
     profile.updated_at = datetime.utcnow()
-    return profile
+    return profile, extraction_source, fields
 
 
 def _format_property(prop) -> str:
@@ -82,7 +98,7 @@ def handle_message(
         raw_payload=raw_payload,
     ))
 
-    profile = upsert_profile(db, contact, text)
+    profile, extraction_source, extracted_fields = upsert_profile(db, contact, text)
 
     if settings.human_handoff_keyword.lower() in text.lower():
         conv.needs_human = True
@@ -99,7 +115,7 @@ def handle_message(
             if not existing_interest:
                 db.add(Interest(contact_id=contact.id, property_id=mentioned.id))
             draft = "Sí, tengo esta propiedad registrada: " + _format_property(mentioned)
-            if mentioned.pets_allowed is True and any(k in text.lower() for k in ["perro", "gato", "mascota"]):
+            if mentioned.pets_allowed is True and profile.pets is True:
                 draft += " En la ficha figura que admite mascotas."
             draft += " Si querés, busco alternativas compatibles con lo que estás buscando."
         else:
@@ -126,14 +142,9 @@ def handle_message(
         "reply": reply,
         "conversation_id": conv.id,
         "contact_id": contact.id,
-        "profile": {
-            "operation": profile.operation,
-            "neighborhoods": profile.neighborhoods,
-            "rooms_min": profile.rooms_min,
-            "rooms_max": profile.rooms_max,
-            "budget_max": profile.budget_max,
-            "currency": profile.currency,
-            "pets": profile.pets,
-            "move_date": profile.move_date,
+        "profile": _profile_as_dict(profile),
+        "extraction": {
+            "source": extraction_source,
+            "fields_from_current_message": extracted_fields,
         },
     }
