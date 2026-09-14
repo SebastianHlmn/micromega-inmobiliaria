@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = "micromega-dev-token"
     whatsapp_access_token: str | None = None
     whatsapp_phone_number_id: str | None = None
+    whatsapp_business_account_id: str | None = None
     whatsapp_graph_api_version: str = "vXX.X"
     meta_app_secret: str | None = None
 
