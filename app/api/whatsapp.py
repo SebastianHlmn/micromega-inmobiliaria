@@ -10,6 +10,23 @@ router = APIRouter(prefix="/webhooks/whatsapp", tags=["whatsapp"])
 settings = get_settings()
 
 
+def _last4(value: str | None) -> str:
+    if not value:
+        return "?"
+    digits = "".join(ch for ch in value if ch.isdigit())
+    return f"***{digits[-4:]}" if len(digits) >= 4 else "***"
+
+
+def _extract_statuses(payload: dict) -> list[dict]:
+    statuses: list[dict] = []
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            for status in value.get("statuses", []) or []:
+                statuses.append(status)
+    return statuses
+
+
 @router.get("")
 def verify(
     hub_mode: str | None = Query(default=None, alias="hub.mode"),
@@ -26,10 +43,43 @@ async def receive(request: Request, db: Session = Depends(get_db)):
     raw = await request.body()
     if not verify_meta_signature(raw, request.headers.get("x-hub-signature-256")):
         raise HTTPException(status_code=401, detail="Invalid Meta signature")
+
     payload = await request.json()
+
+    # Los estados llegan en webhooks separados del mensaje entrante.
+    # Los mostramos sin datos sensibles para poder diagnosticar entrega real.
+    for status in _extract_statuses(payload):
+        errors = status.get("errors") or []
+        error_text = ""
+        if errors:
+            first = errors[0] if isinstance(errors[0], dict) else {}
+            error_text = (
+                f" error_code={first.get('code')}"
+                f" error_title={first.get('title')}"
+                f" error_message={first.get('message')}"
+            )
+        print(
+            "[WhatsApp status]"
+            f" status={status.get('status')}"
+            f" recipient={_last4(status.get('recipient_id'))}"
+            f" message_id={status.get('id')}"
+            f"{error_text}",
+            flush=True,
+        )
+
     messages = extract_incoming_messages(payload)
     processed = 0
+    replies_accepted = 0
+    reply_errors = 0
+
     for item in messages:
+        print(
+            "[WhatsApp inbound]"
+            f" from={_last4(item.get('phone'))}"
+            f" text={item.get('text', '')[:120]!r}",
+            flush=True,
+        )
+
         result = handle_message(
             db=db,
             phone=item["phone"],
@@ -39,7 +89,42 @@ async def receive(request: Request, db: Session = Depends(get_db)):
             external_id=item.get("external_id"),
             raw_payload=payload,
         )
-        if result.get("reply") and settings.auto_reply_enabled:
-            send_text_message(item["phone"], result["reply"])
+
+        reply = result.get("reply")
+        if reply and settings.auto_reply_enabled:
+            try:
+                meta_result = send_text_message(item["phone"], reply)
+                replies_accepted += 1
+                meta_message_id = None
+                if isinstance(meta_result, dict):
+                    meta_messages = meta_result.get("messages") or []
+                    if meta_messages and isinstance(meta_messages[0], dict):
+                        meta_message_id = meta_messages[0].get("id")
+                print(
+                    "[WhatsApp outbound]"
+                    f" accepted=True to={_last4(item.get('phone'))}"
+                    f" message_id={meta_message_id}",
+                    flush=True,
+                )
+            except Exception as exc:
+                reply_errors += 1
+                print(
+                    "[WhatsApp outbound]"
+                    f" accepted=False to={_last4(item.get('phone'))}"
+                    f" error={exc}",
+                    flush=True,
+                )
+        elif not reply:
+            print("[WhatsApp outbound] skipped: motor sin reply", flush=True)
+        elif not settings.auto_reply_enabled:
+            print("[WhatsApp outbound] skipped: AUTO_REPLY_ENABLED=false", flush=True)
+
         processed += 1
-    return {"ok": True, "processed": processed}
+
+    # Respondemos 200 aunque falle la salida, para evitar que Meta reintente el mensaje entrante.
+    return {
+        "ok": True,
+        "processed": processed,
+        "replies_accepted": replies_accepted,
+        "reply_errors": reply_errors,
+    }
