@@ -73,6 +73,19 @@ def _meta_headers() -> dict[str, str]:
     }
 
 
+def _normalize_outbound_recipient(to: str) -> str:
+    """Normaliza sólo el sandbox/dev de Meta para móviles argentinos.
+
+    Meta entrega el wa_id argentino como 54911..., pero en la lista de
+    destinatarios de prueba puede exigir 5411... (sin el 9). Ya comprobamos
+    ese formato al registrar el destinatario. En producción no alteramos el wa_id.
+    """
+    digits = "".join(ch for ch in str(to) if ch.isdigit())
+    if settings.app_env == "dev" and digits.startswith("549") and len(digits) >= 12:
+        return "54" + digits[3:]
+    return digits
+
+
 def get_waba_subscriptions() -> dict:
     if not settings.whatsapp_business_account_id:
         raise RuntimeError("WHATSAPP_BUSINESS_ACCOUNT_ID no está configurado")
@@ -108,9 +121,10 @@ def send_text_message(to: str, text: str):
         f"https://graph.facebook.com/{settings.whatsapp_graph_api_version}/"
         f"{settings.whatsapp_phone_number_id}/messages"
     )
+    recipient = _normalize_outbound_recipient(to)
     payload = {
         "messaging_product": "whatsapp",
-        "to": to,
+        "to": recipient,
         "type": "text",
         "text": {"body": text},
     }
