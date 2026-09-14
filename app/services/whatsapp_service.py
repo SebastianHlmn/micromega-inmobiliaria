@@ -115,8 +115,11 @@ def subscribe_app_to_waba() -> dict:
 
 
 def send_text_message(to: str, text: str):
-    if not settings.whatsapp_access_token or not settings.whatsapp_phone_number_id:
-        return {"sent": False, "reason": "WhatsApp credentials not configured"}
+    if not settings.whatsapp_access_token:
+        raise RuntimeError("WHATSAPP_ACCESS_TOKEN no está configurado")
+    if not settings.whatsapp_phone_number_id:
+        raise RuntimeError("WHATSAPP_PHONE_NUMBER_ID no está configurado")
+
     url = (
         f"https://graph.facebook.com/{settings.whatsapp_graph_api_version}/"
         f"{settings.whatsapp_phone_number_id}/messages"
