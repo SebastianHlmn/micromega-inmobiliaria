@@ -64,6 +64,43 @@ def _meta_error_message(response: httpx.Response) -> str:
     return f"HTTP {response.status_code}: {message}{suffix}"
 
 
+def _meta_headers() -> dict[str, str]:
+    if not settings.whatsapp_access_token:
+        raise RuntimeError("WHATSAPP_ACCESS_TOKEN no está configurado")
+    return {
+        "Authorization": f"Bearer {settings.whatsapp_access_token}",
+        "Content-Type": "application/json",
+    }
+
+
+def get_waba_subscriptions() -> dict:
+    if not settings.whatsapp_business_account_id:
+        raise RuntimeError("WHATSAPP_BUSINESS_ACCOUNT_ID no está configurado")
+    url = (
+        f"https://graph.facebook.com/{settings.whatsapp_graph_api_version}/"
+        f"{settings.whatsapp_business_account_id}/subscribed_apps"
+    )
+    with httpx.Client(timeout=20) as client:
+        response = client.get(url, headers=_meta_headers())
+        if response.is_error:
+            raise RuntimeError(_meta_error_message(response))
+        return response.json()
+
+
+def subscribe_app_to_waba() -> dict:
+    if not settings.whatsapp_business_account_id:
+        raise RuntimeError("WHATSAPP_BUSINESS_ACCOUNT_ID no está configurado")
+    url = (
+        f"https://graph.facebook.com/{settings.whatsapp_graph_api_version}/"
+        f"{settings.whatsapp_business_account_id}/subscribed_apps"
+    )
+    with httpx.Client(timeout=20) as client:
+        response = client.post(url, headers=_meta_headers())
+        if response.is_error:
+            raise RuntimeError(_meta_error_message(response))
+        return response.json()
+
+
 def send_text_message(to: str, text: str):
     if not settings.whatsapp_access_token or not settings.whatsapp_phone_number_id:
         return {"sent": False, "reason": "WhatsApp credentials not configured"}
@@ -71,10 +108,6 @@ def send_text_message(to: str, text: str):
         f"https://graph.facebook.com/{settings.whatsapp_graph_api_version}/"
         f"{settings.whatsapp_phone_number_id}/messages"
     )
-    headers = {
-        "Authorization": f"Bearer {settings.whatsapp_access_token}",
-        "Content-Type": "application/json",
-    }
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
@@ -82,7 +115,7 @@ def send_text_message(to: str, text: str):
         "text": {"body": text},
     }
     with httpx.Client(timeout=20) as client:
-        response = client.post(url, headers=headers, json=payload)
+        response = client.post(url, headers=_meta_headers(), json=payload)
         if response.is_error:
             raise RuntimeError(_meta_error_message(response))
         return response.json()
