@@ -40,6 +40,30 @@ def extract_incoming_messages(payload: dict) -> list[dict]:
     return out
 
 
+def _meta_error_message(response: httpx.Response) -> str:
+    """Devuelve el error útil de Meta sin exponer el access token."""
+    try:
+        data = response.json()
+    except ValueError:
+        body = (response.text or "").strip()
+        return f"HTTP {response.status_code}: {body[:500]}" if body else f"HTTP {response.status_code}"
+
+    error = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(error, dict):
+        return f"HTTP {response.status_code}: {str(data)[:500]}"
+
+    message = error.get("message") or "Error de Meta"
+    details = []
+    if error.get("type"):
+        details.append(f"type={error['type']}")
+    if error.get("code") is not None:
+        details.append(f"code={error['code']}")
+    if error.get("error_subcode") is not None:
+        details.append(f"subcode={error['error_subcode']}")
+    suffix = f" ({', '.join(details)})" if details else ""
+    return f"HTTP {response.status_code}: {message}{suffix}"
+
+
 def send_text_message(to: str, text: str):
     if not settings.whatsapp_access_token or not settings.whatsapp_phone_number_id:
         return {"sent": False, "reason": "WhatsApp credentials not configured"}
@@ -58,6 +82,7 @@ def send_text_message(to: str, text: str):
         "text": {"body": text},
     }
     with httpx.Client(timeout=20) as client:
-        r = client.post(url, headers=headers, json=payload)
-        r.raise_for_status()
-        return r.json()
+        response = client.post(url, headers=headers, json=payload)
+        if response.is_error:
+            raise RuntimeError(_meta_error_message(response))
+        return response.json()
