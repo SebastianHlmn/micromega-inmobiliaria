@@ -27,6 +27,30 @@ def _extract_statuses(payload: dict) -> list[dict]:
     return statuses
 
 
+def _meta_result_summary(meta_result: object) -> str:
+    """Resume la respuesta de Meta sin imprimir tokens ni números completos."""
+    if not isinstance(meta_result, dict):
+        return f"type={type(meta_result).__name__}"
+
+    keys = ",".join(sorted(str(k) for k in meta_result.keys()))
+    parts = [f"keys={keys}"]
+
+    contacts = meta_result.get("contacts") or []
+    if contacts and isinstance(contacts[0], dict):
+        first = contacts[0]
+        parts.append(f"contact_input={_last4(first.get('input'))}")
+        parts.append(f"contact_wa_id={_last4(first.get('wa_id'))}")
+
+    messages = meta_result.get("messages") or []
+    if messages and isinstance(messages[0], dict):
+        parts.append(f"message_id={messages[0].get('id')}")
+
+    if "success" in meta_result:
+        parts.append(f"success={meta_result.get('success')}")
+
+    return " ".join(parts)
+
+
 @router.get("")
 def verify(
     hub_mode: str | None = Query(default=None, alias="hub.mode"),
@@ -95,15 +119,10 @@ async def receive(request: Request, db: Session = Depends(get_db)):
             try:
                 meta_result = send_text_message(item["phone"], reply)
                 replies_accepted += 1
-                meta_message_id = None
-                if isinstance(meta_result, dict):
-                    meta_messages = meta_result.get("messages") or []
-                    if meta_messages and isinstance(meta_messages[0], dict):
-                        meta_message_id = meta_messages[0].get("id")
                 print(
                     "[WhatsApp outbound]"
                     f" accepted=True to={_last4(item.get('phone'))}"
-                    f" message_id={meta_message_id}",
+                    f" {_meta_result_summary(meta_result)}",
                     flush=True,
                 )
             except Exception as exc:
