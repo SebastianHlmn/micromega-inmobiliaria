@@ -7,7 +7,11 @@ from ..config import get_settings
 from ..db import get_db
 from ..models import Contact, Conversation, Message, SearchProfile
 from ..services.conversation_service import handle_message
-from ..services.whatsapp_service import send_text_message
+from ..services.whatsapp_service import (
+    get_waba_subscriptions,
+    send_text_message,
+    subscribe_app_to_waba,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 settings = get_settings()
@@ -75,9 +79,32 @@ def whatsapp_status():
         "openai_configured": bool(settings.openai_api_key),
         "whatsapp_access_token_configured": bool(settings.whatsapp_access_token),
         "whatsapp_phone_number_id_configured": bool(settings.whatsapp_phone_number_id),
+        "whatsapp_business_account_id_configured": bool(settings.whatsapp_business_account_id),
         "whatsapp_graph_api_version": settings.whatsapp_graph_api_version,
         "auto_reply_enabled": settings.auto_reply_enabled,
     }
+
+
+@router.get("/whatsapp/waba-subscriptions")
+def whatsapp_waba_subscriptions():
+    """Lista las apps suscriptas al WABA para diagnosticar webhooks reales."""
+    if settings.app_env != "dev":
+        raise HTTPException(status_code=403, detail="Disponible únicamente en APP_ENV=dev")
+    try:
+        return get_waba_subscriptions()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo consultar el WABA: {exc}") from exc
+
+
+@router.post("/whatsapp/waba-subscribe")
+def whatsapp_waba_subscribe():
+    """Suscribe esta app al WABA usando el access token ya configurado."""
+    if settings.app_env != "dev":
+        raise HTTPException(status_code=403, detail="Disponible únicamente en APP_ENV=dev")
+    try:
+        return subscribe_app_to_waba()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo suscribir la app al WABA: {exc}") from exc
 
 
 @router.post("/whatsapp/test-chat")
