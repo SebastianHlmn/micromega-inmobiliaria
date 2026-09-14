@@ -49,3 +49,43 @@ def test_llm_service_uses_rules_without_api_key():
     assert out["operation"] == "alquiler"
     assert out["neighborhoods"] == ["Villa Crespo"]
     assert out["rooms_min"] == 2
+
+
+def test_intent_greeting_does_not_trigger_search_with_existing_profile():
+    service = LLMService()
+    service.provider = "mock"
+    intent, source = service.classify_intent(
+        "Hola, ¿cómo te va?",
+        current_profile={
+            "operation": "alquiler",
+            "neighborhoods": ["Caballito"],
+            "rooms_min": 2,
+            "budget_max": 800000,
+        },
+    )
+    assert source == "rules"
+    assert intent == "greeting"
+
+
+def test_intent_refines_existing_search():
+    service = LLMService()
+    service.provider = "mock"
+    intent, _ = service.classify_intent(
+        "¿Y algo por Villa Crespo?",
+        current_profile={
+            "operation": "alquiler",
+            "neighborhoods": ["Caballito"],
+            "rooms_min": 2,
+        },
+    )
+    assert intent == "refine_search"
+
+
+def test_intent_property_question():
+    service = LLMService()
+    service.provider = "mock"
+    intent, _ = service.classify_intent(
+        "¿Ese de Rivadavia admite perro?",
+        current_profile={"operation": "alquiler", "neighborhoods": ["Caballito"]},
+    )
+    assert intent == "property_question"
