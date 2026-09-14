@@ -66,8 +66,8 @@ with wa_tab:
     wa_phone = st.text_input(
         "WhatsApp destinatario",
         value="",
-        placeholder="Ej.: 54911XXXXXXXX",
-        help="Usá código de país + área + número. El sistema elimina espacios, + y guiones antes de enviar.",
+        placeholder="Ej.: 5411XXXXXXXX",
+        help="Usá el mismo formato que Meta aceptó como destinatario de prueba. El sistema elimina espacios, + y guiones antes de enviar.",
     )
     wa_name = st.text_input("Nombre del contacto de prueba", value="Sebastián")
     wa_text = st.text_area(
@@ -88,8 +88,12 @@ with wa_tab:
                 )
                 if r.ok:
                     data = r.json()
-                    st.success("Respuesta enviada por WhatsApp.")
+                    st.success("Meta aceptó el envío. La entrega final puede confirmarse después por estado de WhatsApp.")
                     st.write(data.get("reply"))
+                    meta = data.get("meta") or {}
+                    if meta:
+                        with st.expander("Respuesta técnica de Meta"):
+                            st.json(meta)
                     extraction = data.get("extraction", {})
                     st.caption(f"Fuente de interpretación: {extraction.get('source', 'desconocida')}")
                     st.json(data.get("profile", {}))
