@@ -173,6 +173,53 @@ def handle_message(
         raw_payload=raw_payload,
     ))
 
+    # Camino principal: un único agente conversacional decide cuándo hablar y cuándo
+    # usar herramientas reales. La lógica anterior queda debajo como respaldo si OpenAI falla.
+    if agent.available():
+        try:
+            agent_result = agent.run(
+                db=db,
+                contact=contact,
+                conv=conv,
+                text=text,
+                current_profile=profile_before,
+                history=history,
+            )
+            reply = agent_result["reply"]
+            profile = db.scalar(select(SearchProfile).where(SearchProfile.contact_id == contact.id))
+
+            db.add(Message(
+                conversation_id=conv.id,
+                direction="outbound",
+                channel=channel,
+                text=reply,
+            ))
+            db.commit()
+            return {
+                "duplicate": False,
+                "reply": reply,
+                "conversation_id": conv.id,
+                "contact_id": contact.id,
+                "intent": {
+                    "name": "agent",
+                    "source": "openai_tools",
+                },
+                "profile": _profile_as_dict(profile),
+                "extraction": {
+                    "source": None,
+                    "fields_from_current_message": {},
+                },
+                "agent": {
+                    "response_id": agent_result.get("response_id"),
+                    "tools": [
+                        item.get("name")
+                        for item in agent_result.get("tool_trace", [])
+                    ],
+                },
+            }
+        except Exception as exc:
+            print(f"[OpenAI agent] fallback to legacy flow: {exc}", flush=True)
+
     intent, intent_source = llm.classify_intent(
         text=text,
         current_profile=profile_before,
