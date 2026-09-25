@@ -4,10 +4,12 @@ from sqlalchemy.orm import Session
 from ..models import Contact, Conversation, Message, SearchProfile, Interest
 from .property_service import search_properties, find_property_by_text
 from .llm_service import LLMService
+from .agent_service import RealEstateAgent
 from ..config import get_settings
 
 settings = get_settings()
 llm = LLMService()
+agent = RealEstateAgent()
 
 
 SEARCH_PROFILE_FIELDS = (
