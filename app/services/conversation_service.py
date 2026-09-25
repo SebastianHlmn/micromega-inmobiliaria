@@ -4,10 +4,24 @@ from sqlalchemy.orm import Session
 from ..models import Contact, Conversation, Message, SearchProfile, Interest
 from .property_service import search_properties, find_property_by_text
 from .llm_service import LLMService
+from .agent_service import RealEstateAgent
 from ..config import get_settings
 
 settings = get_settings()
 llm = LLMService()
+agent = RealEstateAgent()
+
+
+SEARCH_PROFILE_FIELDS = (
+    "operation",
+    "neighborhoods",
+    "rooms_min",
+    "rooms_max",
+    "budget_max",
+    "currency",
+    "pets",
+    "move_date",
+)
 
 
 def get_or_create_contact(db: Session, phone: str, name: str | None = None) -> Contact:
@@ -34,7 +48,18 @@ def get_or_create_conversation(db: Session, contact: Contact) -> Conversation:
     return conv
 
 
-def _profile_as_dict(profile: SearchProfile) -> dict:
+def _profile_as_dict(profile: SearchProfile | None) -> dict:
+    if not profile:
+        return {
+            "operation": None,
+            "neighborhoods": None,
+            "rooms_min": None,
+            "rooms_max": None,
+            "budget_max": None,
+            "currency": None,
+            "pets": None,
+            "move_date": None,
+        }
     return {
         "operation": profile.operation,
         "neighborhoods": profile.neighborhoods,
@@ -47,12 +72,47 @@ def _profile_as_dict(profile: SearchProfile) -> dict:
     }
 
 
-def upsert_profile(db: Session, contact: Contact, text: str) -> tuple[SearchProfile, str, dict]:
+def _profile_has_data(profile: SearchProfile | None) -> bool:
+    if not profile:
+        return False
+    data = _profile_as_dict(profile)
+    return any(data.get(key) not in (None, [], "") for key in SEARCH_PROFILE_FIELDS)
+
+
+def _recent_history(db: Session, conversation_id: int, limit: int = 8) -> list[dict]:
+    rows = list(db.scalars(
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.id.desc())
+        .limit(limit)
+    ).all())
+    rows.reverse()
+    return [
+        {
+            "role": "cliente" if row.direction == "inbound" else "inmobiliaria",
+            "text": row.text or "",
+        }
+        for row in rows
+        if row.text
+    ]
+
+
+def upsert_profile(
+    db: Session,
+    contact: Contact,
+    text: str,
+    reset: bool = False,
+) -> tuple[SearchProfile, str, dict]:
     profile = db.scalar(select(SearchProfile).where(SearchProfile.contact_id == contact.id))
     if not profile:
         profile = SearchProfile(contact_id=contact.id)
         db.add(profile)
         db.flush()
+
+    if reset:
+        for key in SEARCH_PROFILE_FIELDS:
+            setattr(profile, key, None)
+        profile.free_text_notes = None
 
     fields, extraction_source = llm.extract_search_fields(
         text=text,
@@ -72,6 +132,17 @@ def _format_property(prop) -> str:
     return f"{prop.code}: {prop.rooms} amb. en {prop.neighborhood}, {prop.address}. {prop.currency} {prop.price:,.0f}{exp}; {pet}."
 
 
+def _property_from_recent_context(db: Session, text: str, history: list[dict]):
+    mentioned = find_property_by_text(db, text)
+    if mentioned:
+        return mentioned
+    for item in reversed(history):
+        mentioned = find_property_by_text(db, item.get("text", ""))
+        if mentioned:
+            return mentioned
+    return None
+
+
 def handle_message(
     db: Session,
     phone: str,
@@ -89,6 +160,12 @@ def handle_message(
         if existing:
             return {"duplicate": True, "reply": None, "conversation_id": conv.id}
 
+    # El historial y el perfil se leen antes de incorporar el mensaje actual.
+    # Primero entendemos qué está haciendo el cliente; recién después decidimos si buscar.
+    history = _recent_history(db, conv.id)
+    profile = db.scalar(select(SearchProfile).where(SearchProfile.contact_id == contact.id))
+    profile_before = _profile_as_dict(profile)
+
     db.add(Message(
         conversation_id=conv.id,
         direction="inbound",
@@ -98,12 +175,124 @@ def handle_message(
         raw_payload=raw_payload,
     ))
 
-    profile, extraction_source, extracted_fields = upsert_profile(db, contact, text)
+    # Camino principal: un único agente conversacional decide cuándo hablar y cuándo
+    # usar herramientas reales. La lógica anterior queda debajo como respaldo si OpenAI falla.
+    if agent.available():
+        try:
+            agent_result = agent.run(
+                db=db,
+                contact=contact,
+                conv=conv,
+                text=text,
+                current_profile=profile_before,
+                history=history,
+            )
+            reply = agent_result["reply"]
+            profile = db.scalar(select(SearchProfile).where(SearchProfile.contact_id == contact.id))
 
+            db.add(Message(
+                conversation_id=conv.id,
+                direction="outbound",
+                channel=channel,
+                text=reply,
+            ))
+            db.commit()
+            return {
+                "duplicate": False,
+                "reply": reply,
+                "conversation_id": conv.id,
+                "contact_id": contact.id,
+                "intent": {
+                    "name": "agent",
+                    "source": "openai_tools",
+                },
+                "profile": _profile_as_dict(profile),
+                "extraction": {
+                    "source": None,
+                    "fields_from_current_message": {},
+                },
+                "agent": {
+                    "response_id": agent_result.get("response_id"),
+                    "tools": [
+                        item.get("name")
+                        for item in agent_result.get("tool_trace", [])
+                    ],
+                },
+            }
+        except Exception as exc:
+            print(f"[OpenAI agent] fallback to legacy flow: {exc}", flush=True)
+
+    intent, intent_source = llm.classify_intent(
+        text=text,
+        current_profile=profile_before,
+        history=history,
+    )
     if settings.human_handoff_keyword.lower() in text.lower():
+        intent = "handoff"
+        intent_source = "keyword"
+
+    extraction_source = None
+    extracted_fields: dict = {}
+
+    if intent == "handoff":
         conv.needs_human = True
         draft = "Te paso con una persona de la inmobiliaria. Ya dejo esta conversación marcada para seguimiento."
-    else:
+        reply = llm.rewrite(draft, context=f"Intención: handoff; cliente: {name or phone}; mensaje: {text}")
+
+    elif intent == "greeting":
+        fallback = (
+            "¡Hola! ¿Cómo va? Tengo presente la búsqueda que veníamos viendo. "
+            "Si querés, seguimos desde ahí o cambiamos lo que necesites."
+            if _profile_has_data(profile)
+            else "¡Hola! ¿Cómo va? Contame qué estás buscando y vemos opciones."
+        )
+        reply = llm.conversational_reply(
+            text=text,
+            guidance=(
+                "Respondé al saludo o cortesía de forma natural. No listes propiedades ni hagas una búsqueda. "
+                "Si existe una búsqueda previa, podés mencionar brevemente que la tenés presente y ofrecer continuarla."
+            ),
+            fallback=fallback,
+            current_profile=profile_before,
+            history=history,
+        )
+
+    elif intent == "property_question":
+        mentioned = _property_from_recent_context(db, text, history)
+        if mentioned:
+            existing_interest = db.scalar(
+                select(Interest).where(
+                    Interest.contact_id == contact.id,
+                    Interest.property_id == mentioned.id,
+                )
+            )
+            if not existing_interest:
+                db.add(Interest(contact_id=contact.id, property_id=mentioned.id))
+            draft = "La propiedad a la que se refiere el cliente es: " + _format_property(mentioned)
+            draft += " Respondé únicamente lo que pueda sostenerse con esa ficha y con la pregunta actual."
+            reply = llm.rewrite(
+                draft,
+                context=f"Intención: property_question; cliente: {name or phone}; mensaje: {text}; historial: {history}",
+            )
+        else:
+            reply = llm.conversational_reply(
+                text=text,
+                guidance=(
+                    "El cliente parece preguntar por una propiedad concreta, pero no pudimos identificarla con seguridad. "
+                    "Pedile una referencia breve (código, calle o cuál de las opciones) sin inventar información."
+                ),
+                fallback="¿A cuál de las propiedades te referís? Si me decís el código o la calle, te digo lo que figura en la ficha.",
+                current_profile=profile_before,
+                history=history,
+            )
+
+    elif intent in {"new_search", "refine_search"}:
+        profile, extraction_source, extracted_fields = upsert_profile(
+            db=db,
+            contact=contact,
+            text=text,
+            reset=(intent == "new_search"),
+        )
         mentioned = find_property_by_text(db, text)
         if mentioned:
             existing_interest = db.scalar(
@@ -122,14 +311,36 @@ def handle_message(
             matches = search_properties(db, profile, limit=3)
             if matches:
                 lines = "\n".join(f"• {_format_property(p)}" for p in matches)
-                draft = "Con lo que me contaste, encontré estas opciones disponibles:\n" + lines
+                draft = "Con esos criterios, encontré estas opciones disponibles:\n" + lines
             else:
                 draft = (
-                    "Registré lo que estás buscando, pero no encontré una coincidencia clara en la base demo. "
-                    "Podés decirme zona, cantidad de ambientes, presupuesto y si necesitás que admita mascotas."
+                    "Actualicé lo que estás buscando, pero no encontré una coincidencia clara en la base demo. "
+                    "Pedí sólo el dato que realmente falte o sugerí cambiar algún criterio, sin inventar propiedades."
                 )
+        reply = llm.rewrite(
+            draft,
+            context=(
+                f"Intención: {intent}; cliente: {name or phone}; mensaje: {text}; "
+                f"perfil actualizado: {_profile_as_dict(profile)}"
+            ),
+        )
 
-    reply = llm.rewrite(draft, context=f"Cliente: {name or phone}; mensaje: {text}")
+    else:  # general_question
+        reply = llm.conversational_reply(
+            text=text,
+            guidance=(
+                "Respondé a la consulta o comentario de manera conversacional usando sólo el contexto disponible. "
+                "No listes propiedades ni ejecutes una búsqueda salvo que el cliente lo pida explícitamente. "
+                "Si la consulta requiere un dato que no está disponible, decilo y pedí la aclaración mínima."
+            ),
+            fallback="Te leo. Si querés, seguimos con la búsqueda o decime qué necesitás saber.",
+            current_profile=profile_before,
+            history=history,
+        )
+
+    # Puede haberse creado o actualizado recién en una rama de búsqueda.
+    profile = db.scalar(select(SearchProfile).where(SearchProfile.contact_id == contact.id))
+
     db.add(Message(
         conversation_id=conv.id,
         direction="outbound",
@@ -142,6 +353,10 @@ def handle_message(
         "reply": reply,
         "conversation_id": conv.id,
         "contact_id": contact.id,
+        "intent": {
+            "name": intent,
+            "source": intent_source,
+        },
         "profile": _profile_as_dict(profile),
         "extraction": {
             "source": extraction_source,
