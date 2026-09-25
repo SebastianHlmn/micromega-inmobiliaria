@@ -334,6 +334,7 @@ class RealEstateAgent:
 
             outputs = []
             for call in calls:
+                arguments = {}
                 try:
                     arguments = json.loads(call.arguments or "{}")
                     result = self._execute_tool(
@@ -349,7 +350,7 @@ class RealEstateAgent:
                 trace.append(
                     {
                         "name": call.name,
-                        "arguments": arguments if "arguments" in locals() else {},
+                        "arguments": arguments,
                         "result": result,
                     }
                 )
