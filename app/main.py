@@ -1,14 +1,18 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from .config import get_settings
-from .db import Base, engine
+from .db import Base, engine, SessionLocal
 from . import models  # noqa: F401
 from .api.health import router as health_router
 from .api.simulator import router as simulator_router
 from .api.properties import router as properties_router
 from .api.admin import router as admin_router
 from .api.whatsapp import router as whatsapp_router
+from .api.management import router as management_router
+from .services.management_service import ensure_management_defaults
 
 settings = get_settings()
 
@@ -16,6 +20,8 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        ensure_management_defaults(db)
     yield
 
 
@@ -25,6 +31,10 @@ app.include_router(simulator_router)
 app.include_router(properties_router)
 app.include_router(admin_router)
 app.include_router(whatsapp_router)
+app.include_router(management_router)
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/panel-static", StaticFiles(directory=STATIC_DIR), name="panel-static")
 
 
 @app.get("/")
@@ -36,7 +46,13 @@ def root():
         "simulator": "/api/simulator/message",
         "whatsapp_webhook": "/webhooks/whatsapp",
         "privacy": "/privacy",
+        "panel": "/panel",
     }
+
+
+@app.get("/panel", include_in_schema=False)
+def management_panel():
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/privacy", response_class=HTMLResponse)
