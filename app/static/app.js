@@ -133,7 +133,7 @@ async function loadConversations() {
   state.conversations = rows;
   view.innerHTML =
     '<div class="section-card">' +
-      '<div class="section-head"><h2>Bandeja</h2><span class="muted tiny">' + rows.length + ' conversaciones</span></div>' +
+      '<div class="section-head"><h2>Bandeja</h2><div><span class="muted tiny">' + rows.length + ' conversaciones</span> <a class="small-btn" href="/api/management/export/conversations.csv">Exportar CSV</a></div></div>' +
       '<div class="filters"><input id="conversation-search" placeholder="Buscar por nombre, teléfono, barrio o texto…"></div>' +
       '<div id="conversation-table"></div>' +
     '</div>';
