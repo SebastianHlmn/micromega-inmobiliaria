@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Property
-from ..schemas import PropertyCreate
+from ..schemas import PropertyCreate, PropertyUpdate
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
 
@@ -36,3 +36,15 @@ def create_property(req: PropertyCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(prop)
     return {"id": prop.id, "code": prop.code}
+
+
+@router.patch("/{property_id}")
+def update_property(property_id: int, req: PropertyUpdate, db: Session = Depends(get_db)):
+    prop = db.get(Property, property_id)
+    if not prop:
+        raise HTTPException(404, "Propiedad inexistente.")
+    data = req.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(prop, key, value)
+    db.commit()
+    return {"ok": True, "id": prop.id, "code": prop.code}
