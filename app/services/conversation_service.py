@@ -5,6 +5,7 @@ from ..models import Contact, Conversation, Message, SearchProfile, Interest
 from .property_service import search_properties, find_property_by_text
 from .llm_service import LLMService
 from .agent_service import RealEstateAgent
+from .management_service import categorize_message, record_agent_trace
 from ..config import get_settings
 
 settings = get_settings()
@@ -175,6 +176,13 @@ def handle_message(
         raw_payload=raw_payload,
     ))
 
+    # La clasificación analítica usa la taxonomía configurable del sistema.
+    # Si falla, la conversación sigue: nunca bloquea la respuesta al cliente.
+    try:
+        categorize_message(db, conv.id, text)
+    except Exception as exc:
+        print(f"[Management] category classification skipped: {exc}", flush=True)
+
     # Camino principal: un único agente conversacional decide cuándo hablar y cuándo
     # usar herramientas reales. La lógica anterior queda debajo como respaldo si OpenAI falla.
     if agent.available():
@@ -188,6 +196,7 @@ def handle_message(
                 history=history,
             )
             reply = agent_result["reply"]
+            record_agent_trace(db, conv, contact, agent_result.get("tool_trace", []))
             profile = db.scalar(select(SearchProfile).where(SearchProfile.contact_id == contact.id))
 
             db.add(Message(
