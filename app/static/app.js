@@ -298,7 +298,7 @@ async function loadProperties() {
           return '<tr><td><strong>' + esc(p.code) + '</strong></td><td>' + esc(p.operation) + '</td>' +
             '<td>' + esc(p.neighborhood) + '<br><span class="muted tiny">' + esc(p.address) + '</span></td>' +
             '<td>' + esc(p.rooms) + '</td><td>' + esc(fmtMoney(p.price, p.currency)) + '</td>' +
-            '<td><span class="pill ' + (p.available ? 'green' : 'danger') + '">' + (p.available ? 'Disponible' : 'No disponible') + '</span></td></tr>';
+            '<td><span class="pill ' + (p.available ? 'green' : 'danger') + '">' + (p.available ? 'Disponible' : 'No disponible') + '</span> <button class="small-btn" data-toggle-property="' + p.id + '" data-next="' + (!p.available) + '">' + (p.available ? 'Pausar' : 'Activar') + '</button></td></tr>';
         }).join('') +
       '</tbody></table>' +
     '</div>' +
@@ -318,7 +318,7 @@ async function loadProperties() {
         '<div class="full"><button class="primary" type="submit">Agregar propiedad</button></div>' +
       '</form>' +
     '</div>';
-  document.getElementById('property-form').addEventListener('submit', async function (event) {
+  document.querySelectorAll('[data-toggle-property]').forEach(function (button) {\n    button.addEventListener('click', async function () {\n      await api('/api/properties/' + this.dataset.toggleProperty, {\n        method: 'PATCH',\n        body: JSON.stringify({ available: this.dataset.next === 'true' })\n      });\n      toast('Disponibilidad actualizada');\n      loadProperties();\n    });\n  });\n  document.getElementById('property-form').addEventListener('submit', async function (event) {
     event.preventDefault();
     const form = new FormData(event.target);
     const pet = form.get('pets_allowed');
