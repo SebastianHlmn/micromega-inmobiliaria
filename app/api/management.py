@@ -1,6 +1,9 @@
 from datetime import datetime
+import csv
+import io
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -111,6 +114,63 @@ def _conversation_categories(db: Session, conversation_id: int) -> list[dict]:
 def dashboard(db: Session = Depends(get_db)):
     ensure_management_defaults(db)
     return dashboard_snapshot(db)
+
+
+@router.get("/export/conversations.csv")
+def export_conversations(db: Session = Depends(get_db)):
+    ensure_management_defaults(db)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "conversation_id",
+        "contact_name",
+        "phone",
+        "stage",
+        "categories",
+        "operation",
+        "neighborhoods",
+        "rooms_min",
+        "rooms_max",
+        "budget_max",
+        "currency",
+        "pets",
+        "needs_human",
+        "summary",
+        "created_at",
+        "updated_at",
+    ])
+
+    conversations = list(db.scalars(select(Conversation).order_by(Conversation.id)).all())
+    for conv in conversations:
+        contact = db.get(Contact, conv.contact_id)
+        state = ensure_conversation_state(db, conv.id)
+        profile = db.scalar(select(SearchProfile).where(SearchProfile.contact_id == conv.contact_id))
+        stage = _stage_dict(db, state)
+        categories = _conversation_categories(db, conv.id)
+        writer.writerow([
+            conv.id,
+            contact.name if contact else "",
+            contact.phone if contact else "",
+            stage["name"] if stage else "",
+            " | ".join(item["name"] for item in categories),
+            profile.operation if profile else "",
+            " | ".join(profile.neighborhoods or []) if profile else "",
+            profile.rooms_min if profile else "",
+            profile.rooms_max if profile else "",
+            profile.budget_max if profile else "",
+            profile.currency if profile else "",
+            profile.pets if profile else "",
+            conv.needs_human,
+            state.summary or "",
+            conv.created_at.isoformat(),
+            conv.updated_at.isoformat(),
+        ])
+    db.commit()
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=micromega_conversaciones.csv"},
+    )
 
 
 @router.get("/categories")
