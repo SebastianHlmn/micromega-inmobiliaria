@@ -173,6 +173,42 @@ def export_conversations(db: Session = Depends(get_db)):
     )
 
 
+@router.get("/export/messages.csv")
+def export_messages(db: Session = Depends(get_db)):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "conversation_id",
+        "contact_name",
+        "phone",
+        "direction",
+        "channel",
+        "text",
+        "created_at",
+    ])
+    rows = db.execute(
+        select(Message, Conversation, Contact)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .join(Contact, Contact.id == Conversation.contact_id)
+        .order_by(Message.id)
+    ).all()
+    for message, conversation, contact in rows:
+        writer.writerow([
+            conversation.id,
+            contact.name or "",
+            contact.phone,
+            message.direction,
+            message.channel,
+            message.text or "",
+            message.created_at.isoformat(),
+        ])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=micromega_mensajes.csv"},
+    )
+
+
 @router.get("/categories")
 def list_categories(db: Session = Depends(get_db)):
     ensure_management_defaults(db)
