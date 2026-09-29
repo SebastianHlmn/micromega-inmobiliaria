@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Micromega Inmobiliaria</title>
+  <link rel="stylesheet" href="/panel-static/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">Mμ</div>
+        <div>
+          <strong>Micromega</strong>
+          <span>Inmobiliaria</span>
+        </div>
+      </div>
+      <nav>
+        <button class="nav-item active" data-view="dashboard">Resumen</button>
+        <button class="nav-item" data-view="conversations">Conversaciones</button>
+        <button class="nav-item" data-view="properties">Propiedades</button>
+        <button class="nav-item" data-view="categories">Categorías</button>
+        <button class="nav-item" data-view="visits">Visitas</button>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="status-dot"></span>
+        <span>Demo conectada</span>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Panel de gestión</p>
+          <h1 id="page-title">Resumen</h1>
+        </div>
+        <button id="refresh-btn" class="ghost">Actualizar</button>
+      </header>
+
+      <section id="view-dashboard" class="view active"></section>
+      <section id="view-conversations" class="view"></section>
+      <section id="view-properties" class="view"></section>
+      <section id="view-categories" class="view"></section>
+      <section id="view-visits" class="view"></section>
+    </main>
+  </div>
+
+  <div id="drawer" class="drawer">
+    <div class="drawer-backdrop" data-close-drawer></div>
+    <div class="drawer-panel">
+      <button class="drawer-close" data-close-drawer>×</button>
+      <div id="drawer-content"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="/panel-static/app.js"></script>
+</body>
+</html>
