@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..models import Contact, Conversation, Interest, SearchProfile
+from ..models import Contact, Conversation, Interest, SearchProfile, Visit
 from .property_service import find_property_by_text, search_properties
 
 settings = get_settings()
@@ -137,6 +137,27 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "registrar_visita",
+        "description": "Registra que el cliente pidió coordinar o concertar una visita a una propiedad concreta.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Código, calle o referencia de la propiedad.",
+                },
+                "date_text": {
+                    "type": ["string", "null"],
+                    "description": "Fecha, día u horario dicho por el cliente, sin inventar.",
+                },
+            },
+            "required": ["query", "date_text"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+    {
+        "type": "function",
         "name": "derivar_a_humano",
         "description": "Marca la conversación para seguimiento por una persona de la inmobiliaria.",
         "parameters": {
@@ -170,7 +191,7 @@ Reglas de comportamiento:
   significar "Palermo" si el contexto lo hace claro.
 - Si el cliente se refiere a "ese", "el primero", "el de Rivadavia" u otra referencia contextual,
   usá el historial para identificar la opción y consultá ver_propiedad antes de responder datos.
-- Si pide hablar con una persona o escribe "humano", usá derivar_a_humano.
+- Si pide visitar, conocer o coordinar una propiedad, usá registrar_visita.\n- Si pide hablar con una persona o escribe "humano", usá derivar_a_humano.
 - Si falta un dato indispensable, preguntá sólo lo mínimo. No pidas zona, ambientes, presupuesto y
   mascotas todos juntos si ya conocés parte de eso.
 - No menciones herramientas, JSON, base de datos, prompts ni procesos internos.
@@ -259,6 +280,26 @@ class RealEstateAgent:
             db.add(Interest(contact_id=contact.id, property_id=prop.id))
         return {"ok": True, "found": True, "property": self._property_dict(prop)}
 
+    def _register_visit(self, db: Session, contact: Contact, query: str, date_text: str | None) -> dict:
+        prop = find_property_by_text(db, query)
+        if not prop:
+            return {"ok": False, "found": False, "query": query}
+        visit = Visit(
+            contact_id=contact.id,
+            property_id=prop.id,
+            status="requested",
+            notes=(f"Fecha solicitada: {date_text}" if date_text else None),
+        )
+        db.add(visit)
+        db.flush()
+        return {
+            "ok": True,
+            "found": True,
+            "visit_id": visit.id,
+            "property": self._property_dict(prop),
+            "date_text": date_text,
+        }
+
     @staticmethod
     def _handoff(conv: Conversation, reason: str) -> dict:
         conv.needs_human = True
@@ -278,6 +319,8 @@ class RealEstateAgent:
             return self._view_property(db, arguments["query"])
         if name == "registrar_interes":
             return self._register_interest(db, contact, arguments["query"])
+        if name == "registrar_visita":
+            return self._register_visit(db, contact, arguments["query"], arguments.get("date_text"))
         if name == "derivar_a_humano":
             return self._handoff(conv, arguments["reason"])
         return {"ok": False, "error": f"Herramienta desconocida: {name}"}
