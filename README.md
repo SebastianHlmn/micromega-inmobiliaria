@@ -136,3 +136,69 @@ El servidor deberá ser accesible públicamente por HTTPS para que Meta pueda en
 Esta V0 no pretende ser todavía un CRM inmobiliario completo. Faltan, entre otras cosas: agenda real de visitas, ingesta de publicaciones existentes, audios e imágenes, portal del corredor, reglas de seguimiento, plantillas de WhatsApp, métricas, matching avanzado y una interfaz final de producción.
 
 La siguiente etapa razonable es reemplazar las propiedades ficticias por la fuente real de la inmobiliaria y definir el flujo comercial real antes de automatizar más cosas.
+
+
+## Demo de gestión integrada
+
+La rama `feature/whatsapp-gpt` incorpora un panel de gestión servido por la misma aplicación FastAPI. No requiere Streamlit ni Node para probar la demo.
+
+Con la API levantada:
+
+```bat
+scripts\run_api.bat
+```
+
+abrir:
+
+```text
+http://127.0.0.1:8000/panel
+```
+
+El panel incluye:
+
+- **Resumen**: consultas, personas, mensajes recibidos, intereses, pedidos de visita, visitas concertadas y derivaciones a una persona.
+- **Embudo comercial**: Nuevo → Calificado → Interesado → Visita solicitada → Visita concertada → Seguimiento → Cerrado/Descartado.
+- **Conversaciones**: bandeja por contacto, perfil de búsqueda, categorías detectadas, chat completo, resumen generado con GPT, notas internas y cambio manual de etapa.
+- **Categorías**: taxonomía configurable que el clasificador de GPT usa para estructurar las consultas. El usuario puede activar/desactivar categorías y Micromega mantiene la lógica de prompts y comportamiento del agente.
+- **Propiedades**: visualización del stock, alta manual y activación/pausa de disponibilidad.
+- **Visitas**: pedidos detectados por el agente y confirmación manual de fecha/estado.
+- **Exportación**: CSV de conversaciones estructuradas y CSV de mensajes crudos.
+
+### Datos estructurados de las conversaciones
+
+Además de los mensajes se registran:
+
+- categorías de consulta por conversación;
+- eventos comerciales (`search_started`, `search_refined`, `property_question`, `interest_registered`, `visit_requested`, `visit_scheduled`, `visit_completed`, `handoff`, etc.);
+- etapa del embudo;
+- resumen interno;
+- notas de seguimiento;
+- intereses y visitas;
+- perfil de búsqueda acumulado.
+
+Las categorías no están codificadas en el frontend. Se guardan en base y pueden configurarse. El clasificador recibe la taxonomía activa en cada análisis. La fuente de verdad de propiedades, precios, disponibilidad y condiciones sigue siendo la base de datos.
+
+### Agente de WhatsApp
+
+El flujo principal usa OpenAI Responses API con herramientas del sistema:
+
+- `buscar_propiedades`
+- `ver_propiedad`
+- `registrar_interes`
+- `registrar_visita`
+- `derivar_a_humano`
+
+GPT lleva la conversación y decide cuándo usar una herramienta. Las acciones reales y los datos de propiedad se ejecutan en Python/SQLAlchemy. Si OpenAI falla, permanece el flujo anterior como respaldo para no cortar el webhook.
+
+### Para probar el circuito completo
+
+1. Levantar FastAPI.
+2. Mantener activo el túnel/webhook de WhatsApp.
+3. Enviar desde WhatsApp una búsqueda, por ejemplo: `Busco alquilar un 2 ambientes en Caballito hasta 800 mil y tengo un perro`.
+4. Preguntar por una propiedad concreta.
+5. Pedir una visita.
+6. Abrir `/panel`: la conversación debe aparecer con categorías, eventos y etapa comercial.
+7. Desde **Visitas**, pasar el pedido a `scheduled` para que cuente como visita concertada.
+8. Exportar los CSV desde **Conversaciones**.
+
+Para bases SQLite ya existentes no hace falta borrar datos: al reiniciar FastAPI, SQLAlchemy crea las nuevas tablas de gestión que falten.
